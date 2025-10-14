@@ -1,13 +1,15 @@
 use std::{sync::{atomic::AtomicBool, Arc}, task::Poll, thread, time::Duration};
 
 pub struct NPollsToBeReady {
+    name: String,
     awake: Arc<AtomicBool>,
     left: usize,
 }
 
 impl NPollsToBeReady {
-    pub fn new(n: usize) -> Self {
+    pub fn new(n: usize, name: String) -> Self {
         Self {
+            name,
             awake: Arc::new(AtomicBool::new(true)),
             left: n,
         }
@@ -22,7 +24,7 @@ impl Future for NPollsToBeReady {
             // not awake!
             return Poll::Pending;
         }
-        println!("NPollsToBeReady is polled, remaining {} times.", self.left);
+        println!("NPollsToBeReady [{}] is polled, remaining {} times.", self.name, self.left);
         match self.left {
             0 => Poll::Ready(()),
             _ => {
