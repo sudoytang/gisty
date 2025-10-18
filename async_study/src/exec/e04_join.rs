@@ -12,10 +12,24 @@ use std::task::{
 
 use std::sync::{Arc, Condvar, Mutex};
 
+use crate::util::oneshot::{self, OneshotRx};
+
 struct AsyncTask {
     future: Pin<Box<dyn Future<Output = ()>>>,
 }
 
+pub struct JoinHandle<T> {
+    rx: OneshotRx<T>,
+}
+
+impl<T> Future for JoinHandle<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        Pin::new(&mut this.rx).poll(cx)
+    }
+}
 
 pub struct Executor {
     tasks: RefCell<HashMap<usize, AsyncTask>>,
@@ -214,23 +228,32 @@ impl Executor {
         output
     }
 
-    pub fn spawn<F>(fut: F)
+    pub fn spawn<T, F>(fut: F) -> JoinHandle<T>
     where
-        F: Future<Output = ()> + 'static,
+        F: Future<Output = T> + 'static,
+        T: 'static
     {
         CURRENT_EXECUTOR.with(|exec| {
             let exec = exec.borrow().expect("Executor::spawn must be called within executor context!");
             let exec = unsafe { exec.as_ref() };
             let task_id = exec.next_task_id.get();
             exec.next_task_id.set(task_id + 1);
+
+            let (tx, rx) = oneshot::oneshot();
+            let wrapper = async move {
+                let res = fut.await;
+                tx.send(res);
+            };
             let task = AsyncTask {
-                future: Box::pin(fut)
+                future: Box::pin(wrapper)
             };
 
             exec.tasks.borrow_mut().insert(task_id, task);
             exec.queue.lock().unwrap().push_back(task_id);
             exec.cv.notify_one();
+            JoinHandle { rx }
         })
     }
 }
+
 
